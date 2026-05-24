@@ -12,6 +12,30 @@ class HttpError extends Error {
 	}
 }
 
+function isPrivateIp(ip: string): boolean {
+	// IPv4: check RFC1918, link-local, loopback
+	const ipv4Parts = ip.split('.').map(Number);
+	if (ipv4Parts.length === 4 && ipv4Parts.every(n => !isNaN(n) && n >= 0 && n <= 255)) {
+		if (ipv4Parts[0] === 10) return true;                                          // 10.0.0.0/8
+		if (ipv4Parts[0] === 172 && ipv4Parts[1] >= 16 && ipv4Parts[1] <= 31) return true; // 172.16.0.0/12
+		if (ipv4Parts[0] === 192 && ipv4Parts[1] === 168) return true;                // 192.168.0.0/16
+		if (ipv4Parts[0] === 169 && ipv4Parts[1] === 254) return true;                // 169.254.0.0/16
+		if (ipv4Parts[0] === 127) return true;                                        // 127.0.0.0/8
+		return false;
+	}
+
+	// IPv6: check unique-local, link-local, loopback
+	if (ip.includes(':')) {
+		const lower = ip.toLowerCase();
+		if (lower === '::1') return true;
+		if (lower.startsWith('fe80:') || lower.startsWith('fe80::')) return true;
+		if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+		return false;
+	}
+
+	return false;
+}
+
 function constructClientOptions(request: Request): ClientOptions {
 	const authorization = request.headers.get('Authorization');
 	if (!authorization) {
@@ -41,10 +65,13 @@ function constructDNSRecords(request: Request): AddressableRecord[] {
 
 	if (ip === null || ip === undefined) {
 		throw new HttpError(422, 'The "ip" parameter is required and cannot be empty. Specify ip=auto to use the client IP.');
-	} else if (ip == 'auto') {
+	} else if (ip == 'auto' || isPrivateIp(ip)) {
+		if (ip !== 'auto') {
+			console.log('Received private IP "' + ip + '" from client, falling back to CF-Connecting-IP');
+		}
 		ip = request.headers.get('CF-Connecting-IP');
 		if (ip === null) {
-			throw new HttpError(500, 'Request asked for ip=auto but client IP address cannot be determined.');
+			throw new HttpError(500, 'Client IP address cannot be determined.');
 		}
 	}
 
